@@ -2738,6 +2738,169 @@ def test_pre_call_checks_counts_once_and_filters_on_max_input_tokens(monkeypatch
     assert calls == [1]
 
 
+def test_pre_call_checks_context_window_from_responses_api_string_input(monkeypatch):
+    """
+    Regression test for https://github.com/BerriAI/litellm/issues/33686.
+
+    The Responses API sends `input` instead of `messages`, so _pre_call_checks must
+    derive a token count from `input` when `messages` is not given, instead of silently
+    skipping the context-window check.
+    """
+    router = litellm.Router(
+        model_list=[
+            {"model_name": "m", "litellm_params": {"model": "gpt-3.5-turbo"}},
+        ],
+        enable_pre_call_checks=True,
+    )
+    monkeypatch.setattr(
+        router, "get_router_model_info", lambda **kwargs: {"max_input_tokens": 5}
+    )
+
+    calls = []
+    monkeypatch.setattr(
+        litellm, "token_counter", lambda *a, **k: calls.append(k.get("messages")) or 1000
+    )
+
+    deployments = [
+        {"litellm_params": {"model": "gpt-3.5-turbo"}, "model_info": {"id": "d1"}},
+    ]
+    with pytest.raises(litellm.ContextWindowExceededError):
+        router._pre_call_checks(
+            model="m",
+            healthy_deployments=deployments,
+            input="describe this image in detail",
+        )
+
+    assert calls == [[{"role": "user", "content": "describe this image in detail"}]]
+
+
+def test_pre_call_checks_converts_responses_api_list_input_for_token_counting(
+    monkeypatch,
+):
+    """
+    Responses API `input` can also be a list of input items (multi-turn history), not
+    just a string. _pre_call_checks must convert those into chat messages (reusing the
+    existing Responses<->Chat Completion transform) before counting tokens, rather than
+    passing the raw list straight to token_counter.
+    """
+    router = litellm.Router(
+        model_list=[
+            {"model_name": "m", "litellm_params": {"model": "gpt-3.5-turbo"}},
+        ],
+        enable_pre_call_checks=True,
+    )
+    monkeypatch.setattr(
+        router, "get_router_model_info", lambda **kwargs: {"max_input_tokens": 100000}
+    )
+
+    calls = []
+    monkeypatch.setattr(
+        litellm, "token_counter", lambda *a, **k: calls.append(k.get("messages")) or 1
+    )
+
+    deployments = [
+        {"litellm_params": {"model": "gpt-3.5-turbo"}, "model_info": {"id": "d1"}},
+    ]
+    result = router._pre_call_checks(
+        model="m",
+        healthy_deployments=deployments,
+        input=[
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "hello, how can I help?"},
+        ],
+    )
+
+    assert len(result) == 1
+    assert len(calls) == 1
+    assert [dict(m) for m in calls[0]] == [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "hello, how can I help?"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ageneric_api_call_with_fallbacks_helper_forwards_input_for_routing(
+    monkeypatch,
+):
+    """
+    Regression test for https://github.com/BerriAI/litellm/issues/33686.
+
+    The Responses API is served through _ageneric_api_call_with_fallbacks_helper, which
+    only forwarded kwargs["messages"] to async_get_available_deployment. Since Responses
+    API calls carry kwargs["input"] instead, `input` must also be forwarded, or every
+    downstream pre-call check that depends on it (e.g. context-window filtering) is
+    silently skipped.
+    """
+    router = litellm.Router(
+        model_list=[
+            {"model_name": "m", "litellm_params": {"model": "gpt-3.5-turbo"}},
+        ],
+    )
+
+    captured_kwargs = {}
+
+    class _StopAfterCapture(Exception):
+        pass
+
+    async def _fake_async_get_available_deployment(**kwargs):
+        captured_kwargs.update(kwargs)
+        raise _StopAfterCapture()
+
+    monkeypatch.setattr(
+        router, "async_get_available_deployment", _fake_async_get_available_deployment
+    )
+
+    async def _original_generic_function(**kwargs):
+        return "response"
+
+    with pytest.raises(_StopAfterCapture):
+        await router._ageneric_api_call_with_fallbacks_helper(
+            model="m",
+            original_generic_function=_original_generic_function,
+            input="describe this image in detail",
+        )
+
+    assert captured_kwargs.get("input") == "describe this image in detail"
+
+
+def test_generic_api_call_with_fallbacks_forwards_input_for_routing(monkeypatch):
+    """
+    Sync counterpart of test_ageneric_api_call_with_fallbacks_helper_forwards_input_for_routing:
+    the sync `router.responses()` path goes through _generic_api_call_with_fallbacks, which had
+    the same kwargs["input"] drop bug.
+    """
+    router = litellm.Router(
+        model_list=[
+            {"model_name": "m", "litellm_params": {"model": "gpt-3.5-turbo"}},
+        ],
+    )
+
+    captured_kwargs = {}
+
+    class _StopAfterCapture(Exception):
+        pass
+
+    def _fake_get_available_deployment(**kwargs):
+        captured_kwargs.update(kwargs)
+        raise _StopAfterCapture()
+
+    monkeypatch.setattr(
+        router, "get_available_deployment", _fake_get_available_deployment
+    )
+
+    def _original_function(**kwargs):
+        return "response"
+
+    with pytest.raises(_StopAfterCapture):
+        router._generic_api_call_with_fallbacks(
+            model="m",
+            original_function=_original_function,
+            input="describe this image in detail",
+        )
+
+    assert captured_kwargs.get("input") == "describe this image in detail"
+
+
 def test_get_deployment_model_info_base_model_flow():
     """Test that get_deployment_model_info correctly handles the base model flow"""
     from unittest.mock import patch

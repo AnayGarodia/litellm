@@ -4366,6 +4366,7 @@ class Router:
                     model=model,
                     request_kwargs=kwargs,
                     messages=kwargs.get("messages", None),
+                    input=kwargs.get("input", None),
                     specific_deployment=kwargs.pop("specific_deployment", None),
                 )
             except Exception as e:
@@ -4513,6 +4514,7 @@ class Router:
             deployment = self.get_available_deployment(
                 model=model,
                 messages=kwargs.get("messages", None),
+                input=kwargs.get("input", None),
                 specific_deployment=kwargs.pop("specific_deployment", None),
                 request_kwargs=kwargs,
             )
@@ -9814,7 +9816,8 @@ class Router:
         self,
         model: str,
         healthy_deployments: List,
-        messages: List[Dict[str, str]],
+        messages: Optional[List[Dict[str, str]]] = None,
+        input: Optional[Union[str, List]] = None,
         request_kwargs: Optional[dict] = None,
     ):
         """
@@ -9869,7 +9872,16 @@ class Router:
                 if isinstance(max_input_tokens, int):
                     if input_tokens is None:
                         try:
-                            input_tokens = litellm.token_counter(messages=messages)
+                            token_counter_messages: Optional[List] = messages
+                            if token_counter_messages is None and input is not None:
+                                from litellm.responses.litellm_completion_transformation.transformation import (
+                                    LiteLLMCompletionResponsesConfig,
+                                )
+
+                                token_counter_messages = LiteLLMCompletionResponsesConfig._transform_response_input_param_to_chat_completion_message(
+                                    input=input
+                                )
+                            input_tokens = litellm.token_counter(messages=token_counter_messages)
                         except Exception as e:
                             verbose_router_logger.error(
                                 "litellm.router.py::_pre_call_checks: failed to count tokens. Returning initial list of deployments. Got - {}".format(
@@ -10303,11 +10315,12 @@ class Router:
             parent_otel_span=parent_otel_span,
         )
 
-        if self.enable_pre_call_checks and messages is not None:
+        if self.enable_pre_call_checks and (messages is not None or input is not None):
             healthy_deployments = self._pre_call_checks(
                 model=model,
                 healthy_deployments=cast(List[Dict], healthy_deployments),
                 messages=messages,
+                input=input,
                 request_kwargs=request_kwargs,
             )
         # check if user wants to do tag based routing
@@ -10714,11 +10727,12 @@ class Router:
         healthy_deployments = self._filter_blocked_deployments(healthy_deployments)
 
         # filter pre-call checks
-        if self.enable_pre_call_checks and messages is not None:
+        if self.enable_pre_call_checks and (messages is not None or input is not None):
             healthy_deployments = self._pre_call_checks(
                 model=model,
                 healthy_deployments=healthy_deployments,
                 messages=messages,
+                input=input,
                 request_kwargs=request_kwargs,
             )
 
@@ -10868,11 +10882,12 @@ class Router:
         pass_through_deployments = self._filter_blocked_deployments(pass_through_deployments)
 
         # 5. Apply pre-call checks (if enabled)
-        if self.enable_pre_call_checks and messages is not None:
+        if self.enable_pre_call_checks and (messages is not None or input is not None):
             pass_through_deployments = self._pre_call_checks(
                 model=model,
                 healthy_deployments=pass_through_deployments,
                 messages=messages,
+                input=input,
                 request_kwargs=request_kwargs,
             )
 
