@@ -111,6 +111,14 @@ class _ProviderChunkEarlyReturn:
 _ProviderChunkResult = Union[_ProviderChunkParsed, _ProviderChunkEarlyReturn]
 
 
+def coerce_to_litellm_usage(usage: Union[dict, BaseModel]) -> Usage:
+    if isinstance(usage, Usage):
+        return usage
+    if isinstance(usage, dict):
+        return litellm.Usage(**usage)
+    return litellm.Usage(**usage.model_dump())
+
+
 class CustomStreamWrapper:
     def __init__(
         self,
@@ -1349,28 +1357,7 @@ class CustomStreamWrapper:
                 model_response.choices[0].logprobs = response_obj["logprobs"]
 
             if response_obj["usage"] is not None:
-                if isinstance(response_obj["usage"], dict):
-                    setattr(
-                        model_response,
-                        "usage",
-                        litellm.Usage(
-                            prompt_tokens=response_obj["usage"].get("prompt_tokens", None) or None,
-                            completion_tokens=response_obj["usage"].get("completion_tokens", None) or None,
-                            total_tokens=response_obj["usage"].get("total_tokens", None) or None,
-                        ),
-                    )
-                elif isinstance(response_obj["usage"], Usage):
-                    setattr(
-                        model_response,
-                        "usage",
-                        response_obj["usage"],
-                    )
-                elif isinstance(response_obj["usage"], BaseModel):
-                    setattr(
-                        model_response,
-                        "usage",
-                        litellm.Usage(**response_obj["usage"].model_dump()),
-                    )
+                setattr(model_response, "usage", coerce_to_litellm_usage(response_obj["usage"]))
         return _ProviderChunkParsed(response_obj)
 
     def chunk_creator(self, chunk: Any):  # type: ignore
@@ -1476,7 +1463,7 @@ class CustomStreamWrapper:
                 self.tool_call = True
 
             if hasattr(chunk, "usage") and chunk.usage is not None:
-                model_response.usage = chunk.usage
+                model_response.usage = coerce_to_litellm_usage(chunk.usage)
 
             ## RETURN ARG
             result = self.return_processed_chunk_logic(

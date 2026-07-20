@@ -572,6 +572,131 @@ async def test_streaming_with_usage_and_logging(sync_mode: bool):
             )
 
 
+def test_coerce_to_litellm_usage_from_openai_sdk_completion_usage():
+    from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
+
+    from litellm.litellm_core_utils.streaming_handler import coerce_to_litellm_usage
+
+    openai_sdk_usage = CompletionUsage(
+        completion_tokens=10,
+        prompt_tokens=100,
+        total_tokens=110,
+        prompt_tokens_details=PromptTokensDetails(cached_tokens=80),
+    )
+
+    coerced = coerce_to_litellm_usage(openai_sdk_usage)
+
+    assert isinstance(coerced, Usage)
+    assert coerced.prompt_tokens == 100
+    assert coerced.completion_tokens == 10
+    assert coerced.total_tokens == 110
+    assert isinstance(coerced.prompt_tokens_details, PromptTokensDetailsWrapper)
+    assert coerced.prompt_tokens_details.cached_tokens == 80
+
+
+def test_coerce_to_litellm_usage_from_dict_keeps_prompt_tokens_details():
+    from litellm.litellm_core_utils.streaming_handler import coerce_to_litellm_usage
+
+    coerced = coerce_to_litellm_usage(
+        {
+            "completion_tokens": 10,
+            "prompt_tokens": 100,
+            "total_tokens": 110,
+            "prompt_tokens_details": {"cached_tokens": 80},
+        }
+    )
+
+    assert isinstance(coerced, Usage)
+    assert coerced.prompt_tokens_details.cached_tokens == 80
+
+
+@pytest.mark.parametrize("sync_mode", [True, False])
+@pytest.mark.asyncio
+async def test_streaming_handler_openai_sdk_usage_preserves_prompt_tokens_details(
+    sync_mode: bool,
+):
+    """
+    Regression test for https://github.com/BerriAI/litellm/issues/33967
+
+    custom_openai / other OpenAI-compatible providers route through
+    OpenAIChatCompletion.streaming(), which hands CustomStreamWrapper raw
+    openai-python SDK chunks (openai.types.chat.ChatCompletionChunk) with
+    custom_llm_provider="openai". Those chunks carry usage as the SDK's own
+    CompletionUsage/PromptTokensDetails types, not litellm's Usage/
+    PromptTokensDetailsWrapper. Assigning that object straight onto
+    model_response.usage must not silently lose prompt_tokens_details.
+    """
+    import time
+
+    from openai.types.chat.chat_completion_chunk import (
+        ChatCompletionChunk,
+        Choice,
+        ChoiceDelta,
+    )
+    from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
+
+    content_chunk = ChatCompletionChunk(
+        id="chatcmpl-abc123",
+        choices=[
+            Choice(
+                index=0,
+                delta=ChoiceDelta(role="assistant", content="hello there"),
+                finish_reason=None,
+            )
+        ],
+        created=1700000000,
+        model="my-custom-model",
+        object="chat.completion.chunk",
+    )
+    finish_chunk_with_usage = ChatCompletionChunk(
+        id="chatcmpl-abc123",
+        choices=[Choice(index=0, delta=ChoiceDelta(), finish_reason="stop")],
+        created=1700000000,
+        model="my-custom-model",
+        object="chat.completion.chunk",
+        usage=CompletionUsage(
+            completion_tokens=10,
+            prompt_tokens=100,
+            total_tokens=110,
+            prompt_tokens_details=PromptTokensDetails(cached_tokens=80),
+        ),
+    )
+    completion_stream = ModelResponseListIterator(model_responses=[content_chunk, finish_chunk_with_usage])
+
+    response = CustomStreamWrapper(
+        completion_stream=completion_stream,
+        model="custom_openai/my-custom-model",
+        custom_llm_provider="openai",
+        logging_obj=Logging(
+            model="custom_openai/my-custom-model",
+            messages=[{"role": "user", "content": "hi"}],
+            stream=True,
+            call_type="completion",
+            start_time=time.time(),
+            litellm_call_id="12345",
+            function_id="1245",
+        ),
+        stream_options={"include_usage": True},
+    )
+
+    seen_usage: Optional[Usage] = None
+    if sync_mode:
+        for chunk in response:
+            if getattr(chunk, "usage", None) is not None:
+                seen_usage = chunk.usage
+    else:
+        async for chunk in response:
+            if getattr(chunk, "usage", None) is not None:
+                seen_usage = chunk.usage
+
+    assert seen_usage is not None
+    assert isinstance(seen_usage, Usage)
+    assert seen_usage.prompt_tokens == 100
+    assert seen_usage.completion_tokens == 10
+    assert seen_usage.prompt_tokens_details is not None
+    assert seen_usage.prompt_tokens_details.cached_tokens == 80
+
+
 def test_streaming_handler_with_stop_chunk(
     initialized_custom_stream_wrapper: CustomStreamWrapper,
 ):
