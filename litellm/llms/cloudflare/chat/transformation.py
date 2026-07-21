@@ -3,6 +3,10 @@ from typing import List, Optional, Union
 import httpx
 
 from litellm._logging import verbose_logger
+from litellm.litellm_core_utils.prompt_templates.common_utils import (
+    _audio_or_image_in_message_content,
+    convert_content_list_to_str,
+)
 from litellm.llms.base_llm.chat.transformation import BaseLLMException
 from litellm.llms.openai.chat.gpt_transformation import OpenAIGPTConfig
 from litellm.secret_managers.main import (
@@ -93,3 +97,17 @@ class CloudflareChatConfig(OpenAIGPTConfig):
             status_code=status_code,
             message=error_message,
         )
+
+    def _transform_messages(
+        self,
+        messages: List[AllMessageValues],
+        model: str,
+    ) -> List:
+        for message in messages:
+            if _audio_or_image_in_message_content(message):
+                continue
+
+            text = convert_content_list_to_str(message=message)
+            if text:
+                message["content"] = text
+        return messages
