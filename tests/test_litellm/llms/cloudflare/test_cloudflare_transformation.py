@@ -162,6 +162,53 @@ def test_transform_request_passes_tools_through_in_openai_format():
     assert body["tool_choice"] == "auto"
 
 
+def test_transform_request_flattens_openai_content_part_list_to_string():
+    config = CloudflareChatConfig()
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Hello"},
+                {"type": "text", "text": "world"},
+            ],
+        }
+    ]
+
+    body = config.transform_request(
+        model="@cf/meta/llama-3.2-1b-instruct",
+        messages=messages,
+        optional_params={},
+        litellm_params={},
+        headers={},
+    )
+
+    assert body["messages"] == [{"role": "user", "content": "Helloworld"}]
+
+
+@pytest.mark.asyncio
+async def test_async_transform_request_flattens_openai_content_part_list_to_string():
+    config = CloudflareChatConfig()
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Hello"},
+                {"type": "text", "text": "world"},
+            ],
+        }
+    ]
+
+    body = await config.async_transform_request(
+        model="@cf/meta/llama-3.2-1b-instruct",
+        messages=messages,
+        optional_params={},
+        litellm_params={},
+        headers={},
+    )
+
+    assert body["messages"] == [{"role": "user", "content": "Helloworld"}]
+
+
 def test_validate_environment_requires_api_key():
     config = CloudflareChatConfig()
 
