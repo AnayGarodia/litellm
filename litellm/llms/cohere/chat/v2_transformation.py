@@ -148,8 +148,12 @@ class CohereV2ChatConfig(OpenAIGPTConfig):
                 optional_params["max_tokens"] = value
             if param == "max_completion_tokens":
                 optional_params["max_tokens"] = value
-            if param == "n":
-                optional_params["num_generations"] = value
+            if param == "n" and value != 1:
+                if not (litellm.drop_params or drop_params):
+                    raise litellm.utils.UnsupportedParamsError(
+                        message=f"Cohere's chat API does not support multiple completions (n={value}). To drop this param and generate a single completion, set `litellm.drop_params = True`.",
+                        status_code=400,
+                    )
             if param == "top_p":
                 optional_params["p"] = value
             if param == "frequency_penalty":

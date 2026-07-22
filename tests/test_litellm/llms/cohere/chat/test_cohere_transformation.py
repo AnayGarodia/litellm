@@ -2,11 +2,14 @@ import os
 import sys
 from unittest.mock import MagicMock
 
+import pytest
+
 sys.path.insert(
     0, os.path.abspath("../../../../..")
 )  # Adds the parent directory to the system path
 
 import litellm
+from litellm.exceptions import UnsupportedParamsError
 from litellm.llms.cohere.chat.transformation import CohereChatConfig
 from litellm.llms.cohere.chat.v2_transformation import CohereV2ChatConfig
 
@@ -51,6 +54,38 @@ class TestCohereTransform:
 
         # The function should properly map max_tokens if max_completion_tokens is not provided
         assert result == {"temperature": 0.7, "max_tokens": 200}
+
+    def test_n_equals_one_is_noop(self):
+        """n=1 (the default) must not be forwarded as num_generations - cohere's chat api rejects that field entirely"""
+        result = self.config.map_openai_params(
+            non_default_params={"temperature": 0.7, "n": 1},
+            optional_params={},
+            model=self.model,
+            drop_params=False,
+        )
+
+        assert result == {"temperature": 0.7}
+
+    def test_n_greater_than_one_raises_when_drop_params_false(self):
+        """cohere's chat api has no concept of multiple generations; n>1 must be rejected, not silently sent as an invalid field"""
+        with pytest.raises(UnsupportedParamsError):
+            self.config.map_openai_params(
+                non_default_params={"n": 2},
+                optional_params={},
+                model=self.model,
+                drop_params=False,
+            )
+
+    def test_n_greater_than_one_dropped_when_drop_params_true(self):
+        """with drop_params=True, n>1 is dropped instead of raising"""
+        result = self.config.map_openai_params(
+            non_default_params={"n": 2},
+            optional_params={},
+            model=self.model,
+            drop_params=True,
+        )
+
+        assert result == {}
 
 
 class TestCohereV2Transform:
@@ -117,3 +152,35 @@ class TestCohereV2Transform:
         )
 
         assert optional_params["max_tokens"] == 256
+
+    def test_v2_n_equals_one_is_noop(self):
+        """n=1 (the default) must not be forwarded as num_generations - cohere's v2 chat api rejects that field entirely"""
+        result = self.config.map_openai_params(
+            non_default_params={"temperature": 0.7, "n": 1},
+            optional_params={},
+            model=self.model,
+            drop_params=False,
+        )
+
+        assert result == {"temperature": 0.7}
+
+    def test_v2_n_greater_than_one_raises_when_drop_params_false(self):
+        """cohere's v2 chat api has no concept of multiple generations; n>1 must be rejected, not silently sent as an invalid field"""
+        with pytest.raises(UnsupportedParamsError):
+            self.config.map_openai_params(
+                non_default_params={"n": 2},
+                optional_params={},
+                model=self.model,
+                drop_params=False,
+            )
+
+    def test_v2_n_greater_than_one_dropped_when_drop_params_true(self):
+        """with drop_params=True, n>1 is dropped instead of raising"""
+        result = self.config.map_openai_params(
+            non_default_params={"n": 2},
+            optional_params={},
+            model=self.model,
+            drop_params=True,
+        )
+
+        assert result == {}
