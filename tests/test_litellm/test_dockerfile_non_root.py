@@ -52,3 +52,29 @@ def test_final_user_directive_is_numeric():
         f"Dockerfile.non_root final USER is {final_user} (root); the non_root image "
         "must run as a non-zero UID."
     )
+
+
+@pytest.mark.skipif(
+    not os.path.exists(DOCKERFILE_PATH),
+    reason="Dockerfile.non_root not present in this checkout",
+)
+def test_prisma_binary_cache_is_group_writable():
+    """/app/.cache holds PRISMA_BINARY_CACHE_DIR, which `prisma generate` writes
+    to at container startup. Arbitrary-UID-with-GID-0 deployments (the
+    OpenShift restricted SCC pattern this image targets) can only write there
+    if it gets the same chgrp 0 / chmod g=u / chmod g+w treatment as
+    $PRISMA_PATH, not just the trailing g+rX pass, otherwise prisma generate
+    fails with "Can't write to .../prisma-python/binaries"."""
+    with open(DOCKERFILE_PATH, "r", encoding="utf-8") as f:
+        contents = f.read()
+
+    for pattern in (
+        r"chgrp\s+-R\s+0\s+[^\n]*\bapp/\.cache\b",
+        r"chmod\s+-R\s+g=u\s+[^\n]*\bapp/\.cache\b",
+        r"chmod\s+-R\s+g\+w\s+[^\n]*\bapp/\.cache\b",
+    ):
+        assert re.search(pattern, contents), (
+            f"Dockerfile.non_root is missing {pattern!r} for /app/.cache; "
+            "an arbitrary-UID/GID-0 runtime user won't be able to write to "
+            "PRISMA_BINARY_CACHE_DIR"
+        )
