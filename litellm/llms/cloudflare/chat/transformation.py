@@ -3,6 +3,10 @@ from typing import List, Optional, Union
 import httpx
 
 from litellm._logging import verbose_logger
+from litellm.litellm_core_utils.prompt_templates.common_utils import (
+    _audio_or_image_in_message_content,
+    convert_content_list_to_str,
+)
 from litellm.llms.base_llm.chat.transformation import BaseLLMException
 from litellm.llms.openai.chat.gpt_transformation import OpenAIGPTConfig
 from litellm.secret_managers.main import (
@@ -93,3 +97,24 @@ class CloudflareChatConfig(OpenAIGPTConfig):
             status_code=status_code,
             message=error_message,
         )
+
+    def _transform_messages(
+        self,
+        messages: List[AllMessageValues],
+        model: str,
+    ) -> List:
+        """
+        Cloudflare Workers AI rejects OpenAI-style content-part list messages
+        with a string-only `content` field. This handles:
+            1. Transforms list content to a string.
+            2. If message contains an image or audio, send as is (user-intended)
+        """
+        for message in messages:
+            # Do nothing if the message contains an image or audio
+            if _audio_or_image_in_message_content(message):
+                continue
+
+            texts = convert_content_list_to_str(message=message)
+            if texts:
+                message["content"] = texts
+        return messages

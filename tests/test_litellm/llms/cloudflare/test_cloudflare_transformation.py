@@ -162,6 +162,55 @@ def test_transform_request_passes_tools_through_in_openai_format():
     assert body["tool_choice"] == "auto"
 
 
+def test_transform_request_converts_content_list_to_string():
+    config = CloudflareChatConfig()
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Hello"},
+                {"type": "text", "text": "More text"},
+            ],
+        }
+    ]
+
+    body = config.transform_request(
+        model="@cf/meta/llama-2-7b-chat-int8",
+        messages=messages,
+        optional_params={},
+        litellm_params={},
+        headers={},
+    )
+
+    assert body["messages"][0]["content"] == "HelloMore text"
+
+
+def test_transform_request_leaves_image_content_as_list():
+    config = CloudflareChatConfig()
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "describe this"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "https://example.com/cat.png"},
+                },
+            ],
+        }
+    ]
+
+    body = config.transform_request(
+        model="@cf/meta/llama-2-7b-chat-int8",
+        messages=messages,
+        optional_params={},
+        litellm_params={},
+        headers={},
+    )
+
+    assert isinstance(body["messages"][0]["content"], list)
+
+
 def test_validate_environment_requires_api_key():
     config = CloudflareChatConfig()
 
