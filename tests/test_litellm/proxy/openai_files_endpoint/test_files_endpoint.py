@@ -2,7 +2,7 @@ import json
 import os
 import sys
 from typing import List
-from unittest.mock import ANY, AsyncMock
+from unittest.mock import ANY, AsyncMock, patch
 
 import pytest
 import respx
@@ -3051,3 +3051,81 @@ def test_list_files_key_allowed_openai_model_still_resolves_team_credentials(
         mocker, monkeypatch, _team_openai_plus_global_anthropic_router(), ["team-gpt"]
     )
     assert captured_kwargs.get("api_key") == "team-openai-key"
+
+
+def test_openai_passthrough_v1_files_routes_to_passthrough_handler(monkeypatch):
+    """
+    Regression for GH #36086: /openai_passthrough/v1/files was captured by the
+    generic /{provider}/v1/files route (provider="openai_passthrough"), which
+    crashed validating "openai_passthrough" as an LlmProviders member. It must
+    reach the dedicated openai_proxy_route handler instead.
+    """
+    import litellm.proxy.proxy_server as ps
+    from litellm.proxy._types import LitellmUserRoles
+
+    monkeypatch.setattr("litellm.proxy.proxy_server.master_key", None)
+    app.dependency_overrides[ps.user_api_key_auth] = lambda: UserAPIKeyAuth(
+        user_role=LitellmUserRoles.PROXY_ADMIN, user_id="test-user"
+    )
+
+    try:
+        with (
+            patch(
+                "litellm.proxy.pass_through_endpoints.llm_passthrough_endpoints.passthrough_endpoint_router.get_credentials",
+                return_value="sk-test-key",
+            ),
+            patch(
+                "litellm.proxy.pass_through_endpoints.llm_passthrough_endpoints.create_pass_through_route"
+            ) as mock_create_route,
+        ):
+            mock_create_route.return_value = AsyncMock(return_value={"object": "list", "data": []})
+
+            response = client.get(
+                "/openai_passthrough/v1/files",
+                headers={"Authorization": "Bearer test-key"},
+            )
+
+            assert response.status_code == 200, response.text
+            mock_create_route.assert_called_once()
+            call_kwargs = mock_create_route.call_args[1]
+            assert call_kwargs["target"] == "https://api.openai.com/v1/files"
+    finally:
+        app.dependency_overrides.pop(ps.user_api_key_auth, None)
+
+
+def test_openai_passthrough_v1_batches_not_routed_to_files_handler(monkeypatch):
+    """
+    /openai_passthrough/v1/batches must not be captured by the generic
+    /{provider}/v1/files or /{provider}/v1/batches routes either.
+    """
+    import litellm.proxy.proxy_server as ps
+    from litellm.proxy._types import LitellmUserRoles
+
+    monkeypatch.setattr("litellm.proxy.proxy_server.master_key", None)
+    app.dependency_overrides[ps.user_api_key_auth] = lambda: UserAPIKeyAuth(
+        user_role=LitellmUserRoles.PROXY_ADMIN, user_id="test-user"
+    )
+
+    try:
+        with (
+            patch(
+                "litellm.proxy.pass_through_endpoints.llm_passthrough_endpoints.passthrough_endpoint_router.get_credentials",
+                return_value="sk-test-key",
+            ),
+            patch(
+                "litellm.proxy.pass_through_endpoints.llm_passthrough_endpoints.create_pass_through_route"
+            ) as mock_create_route,
+        ):
+            mock_create_route.return_value = AsyncMock(return_value={"object": "list", "data": []})
+
+            response = client.get(
+                "/openai_passthrough/v1/batches",
+                headers={"Authorization": "Bearer test-key"},
+            )
+
+            assert response.status_code == 200, response.text
+            mock_create_route.assert_called_once()
+            call_kwargs = mock_create_route.call_args[1]
+            assert call_kwargs["target"] == "https://api.openai.com/v1/batches"
+    finally:
+        app.dependency_overrides.pop(ps.user_api_key_auth, None)

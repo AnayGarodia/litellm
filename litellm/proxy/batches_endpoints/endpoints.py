@@ -37,11 +37,21 @@ from litellm.proxy.openai_files_endpoints.common_utils import (
     prepare_data_with_credentials,
     update_batch_in_database,
 )
+from litellm.proxy.pass_through_endpoints.llm_passthrough_endpoints import (
+    openai_proxy_route,
+)
 from litellm.proxy.utils import handle_exception_on_proxy, is_known_model
 from litellm.repositories.table_repositories import ManagedFileRepository
 from litellm.types.llms.openai import LiteLLMBatchCreateRequest
 
 router: Final = APIRouter()
+
+router.add_api_route(
+    "/openai_passthrough/{endpoint:path}",
+    openai_proxy_route,
+    methods=("GET", "POST", "PUT", "DELETE", "PATCH"),  # pyright: ignore[reportArgumentType]  # only iterated
+    include_in_schema=False,
+)
 
 
 async def _resolve_managed_input_file_storage_url(input_file_id: str) -> "str | None":

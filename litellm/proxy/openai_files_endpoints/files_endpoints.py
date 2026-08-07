@@ -51,6 +51,9 @@ from litellm.proxy.openai_files_endpoints.common_utils import (
     prepare_data_with_credentials,
     validate_managed_files_requirement,
 )
+from litellm.proxy.pass_through_endpoints.llm_passthrough_endpoints import (
+    openai_proxy_route,
+)
 from litellm.proxy.utils import ProxyLogging, is_known_model
 from litellm.repositories.table_repositories import ManagedFileRepository
 from litellm.router import Router
@@ -62,6 +65,13 @@ from litellm.types.llms.openai import (
 )
 
 router: Final = APIRouter()
+
+router.add_api_route(
+    "/openai_passthrough/{endpoint:path}",
+    openai_proxy_route,
+    methods=("GET", "POST", "PUT", "DELETE", "PATCH"),  # pyright: ignore[reportArgumentType]  # only iterated
+    include_in_schema=False,
+)
 
 files_config = None
 
