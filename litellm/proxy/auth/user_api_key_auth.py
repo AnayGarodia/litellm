@@ -1668,9 +1668,12 @@ async def _user_api_key_auth_builder(
                     )
             except ProxyException as e:
                 if e.code == 401 or e.code == "401":
-                    e.message = "Authentication Error, Invalid proxy server token passed. Received API Key = {}, Key Hash (Token) ={}. Unable to find token in cache or `LiteLLM_VerificationTokenTable`".format(
-                        abbreviated_api_key, api_key
+                    verbose_logger.debug(
+                        "Invalid proxy server token passed. Received API Key = %s, Key Hash (Token) = %s. Unable to find token in cache or DB.",
+                        abbreviated_api_key,
+                        api_key,
                     )
+                    e.message = "Authentication Error, Invalid proxy server token passed."
                 raise e
             # update end-user params on valid token
             # These can change per request - it's important to update them here

@@ -3777,6 +3777,31 @@ async def test_builder_returns_401_when_db_lookup_reports_missing_key():
 
 
 @pytest.mark.asyncio
+async def test_builder_401_message_does_not_leak_key_hash_or_table_name():
+    """Regression guard: the 401 raised for a missing/invalid key must not
+    disclose the SHA-256 hash of the submitted key, or internal table
+    names, to the caller. Re-introducing the raw hash/table-name string
+    formatting in the client-facing message flips this to fail."""
+    from litellm.proxy.utils import hash_token
+
+    missing_key_error = ProxyException(
+        message="Authentication Error, Invalid proxy server token passed. key=..., not found in db.",
+        type=ProxyErrorTypes.token_not_found_in_db,
+        param="key",
+        code=status.HTTP_401_UNAUTHORIZED,
+    )
+    get_key_object = AsyncMock(side_effect=missing_key_error)
+
+    with pytest.raises(ProxyException) as exc_info:
+        await _run_builder_with_key_lookup(get_key_object)
+
+    leaked_hash = hash_token("sk-db-lookup-test")
+    assert leaked_hash not in exc_info.value.message
+    assert "VerificationTokenTable" not in exc_info.value.message
+    assert "LiteLLM" not in exc_info.value.message
+
+
+@pytest.mark.asyncio
 async def test_builder_succeeds_when_db_lookup_returns_valid_token():
     """Regression guard: a valid key still authenticates. Proves the 503
     conversion only fires on the failure path and never intercepts success."""
