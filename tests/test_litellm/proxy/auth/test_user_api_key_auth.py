@@ -4321,6 +4321,52 @@ async def test_centralized_common_checks_reserves_request_end_user_budget():
     ) == pytest.approx(0.6)
 
 
+def test_update_valid_token_with_end_user_params_sets_end_user_max_budget():
+    """Regression: ``_apply_budget_limits_to_end_user_params`` writes
+    ``end_user_max_budget`` into ``end_user_params``, but this copy step
+    used to skip it while copying every sibling field (tpm/rpm limits,
+    allowed_model_region, end_user_model_max_budget). The gap left
+    ``valid_token.end_user_max_budget`` at None for a brand-new end user,
+    so ``_get_end_user_budget_counter`` had nothing to enforce against and
+    concurrent first requests from that end user bypassed their budget."""
+    from litellm.proxy.auth.user_api_key_auth import (
+        update_valid_token_with_end_user_params,
+    )
+
+    token = UserAPIKeyAuth(api_key="sk-test", user_id="u")
+    end_user_params = {
+        "end_user_id": "alice",
+        "end_user_tpm_limit": 100,
+        "end_user_rpm_limit": 10,
+        "allowed_model_region": "us",
+        "end_user_max_budget": 0.01,
+        "end_user_model_max_budget": {"gpt-4o": 0.02},
+    }
+
+    result = update_valid_token_with_end_user_params(valid_token=token, end_user_params=end_user_params)
+
+    assert result.end_user_max_budget == 0.01
+    assert result.end_user_tpm_limit == 100
+    assert result.end_user_rpm_limit == 10
+    assert result.allowed_model_region == "us"
+    assert result.end_user_model_max_budget == {"gpt-4o": 0.02}
+
+
+def test_update_valid_token_with_end_user_params_leaves_end_user_max_budget_unset():
+    """A DB lookup where the budget table has no max_budget must not
+    clear a value a custom auth function already placed on the token,
+    matching the documented behaviour of the sibling fields above it."""
+    from litellm.proxy.auth.user_api_key_auth import (
+        update_valid_token_with_end_user_params,
+    )
+
+    token = UserAPIKeyAuth(api_key="sk-test", user_id="u", end_user_max_budget=5.0)
+
+    result = update_valid_token_with_end_user_params(valid_token=token, end_user_params={"end_user_id": "alice"})
+
+    assert result.end_user_max_budget == 5.0
+
+
 @pytest.mark.asyncio
 async def test_centralized_common_checks_short_circuits_when_master_key_unset():
     """master_key=None is no-auth dev mode — admin-only routes and
