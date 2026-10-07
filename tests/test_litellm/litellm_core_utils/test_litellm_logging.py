@@ -1,6 +1,7 @@
 import os
 import sys
 import asyncio
+import threading
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -3936,3 +3937,46 @@ def test_pre_call_does_not_pin_request_in_module_state(logging_obj):
     logging_obj.post_call(original_response='{"ok": true}', input=big_input, api_key="sk-test")
 
     assert litellm.error_logs == {}
+
+
+class TestMergeLitellmMetadataConcurrentMutation:
+    """Regression test for https://github.com/BerriAI/litellm/issues/44748.
+
+    On the /v1/messages path, StandardLoggingPayloadSetup.merge_litellm_metadata
+    iterates litellm_params["metadata"].items() while building the standard
+    logging payload. A sync success callback dispatched to the executor
+    thread pool for an async call (e.g. because "cache" sits unfiltered in
+    litellm.success_callback) can concurrently insert "hidden_params" into
+    that same metadata dict via _process_hidden_params_and_response_cost.
+    The live iteration used to raise
+    "RuntimeError: dictionary changed size during iteration", which surfaced
+    as an HTTP 500 even though the request had already succeeded and the
+    spend had already been logged.
+    """
+
+    def test_survives_concurrent_dict_mutation(self):
+        from litellm.litellm_core_utils.litellm_logging import (
+            StandardLoggingPayloadSetup,
+        )
+
+        duration_seconds = 0.3
+
+        for _ in range(5):
+            metadata = {f"user_api_key_{i}": i for i in range(3000)}
+            litellm_params = {"metadata": metadata}
+            stop_at = time.time() + duration_seconds
+
+            def mutator() -> None:
+                n = 0
+                while time.time() < stop_at:
+                    metadata[f"hidden_params_{n}"] = n
+                    n += 1
+
+            mutator_thread = threading.Thread(target=mutator, daemon=True)
+            mutator_thread.start()
+            try:
+                while time.time() < stop_at:
+                    merged = StandardLoggingPayloadSetup.merge_litellm_metadata(litellm_params)
+                    assert merged["user_api_key_0"] == 0
+            finally:
+                mutator_thread.join(timeout=2)

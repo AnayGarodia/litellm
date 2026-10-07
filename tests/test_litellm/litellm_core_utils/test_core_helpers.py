@@ -1,9 +1,13 @@
 """Tests for litellm_core_utils.core_helpers module."""
 
+import threading
+import time
+
 import pytest
 
 from litellm.litellm_core_utils.core_helpers import (
     _FINISH_REASON_MAP,
+    add_missing_spend_metadata_to_litellm_metadata,
     map_finish_reason,
     reconstruct_model_name,
     redact_nested_match_and_regex_keys,
@@ -201,3 +205,40 @@ class TestRedactNestedMatchAndRegexKeys:
     def test_passes_through_none_and_str(self):
         assert redact_nested_match_and_regex_keys(None) is None
         assert redact_nested_match_and_regex_keys("plain") == "plain"
+
+
+class TestAddMissingSpendMetadataConcurrentMutation:
+    """Regression test for https://github.com/BerriAI/litellm/issues/44748.
+
+    On the /v1/messages path, add_missing_spend_metadata_to_litellm_metadata
+    iterates litellm_params["metadata"].items() on one thread (the async
+    success callback / spend tracking path) while a sync success callback
+    scheduled on the executor thread pool (e.g. because "cache" is present
+    in litellm.success_callback) concurrently inserts "hidden_params" into
+    that same dict. The live iteration used to raise
+    "RuntimeError: dictionary changed size during iteration", which surfaced
+    as an HTTP 500 to the caller even though the request itself had already
+    succeeded and been billed.
+    """
+
+    def test_survives_concurrent_dict_mutation(self):
+        duration_seconds = 0.3
+
+        for _ in range(5):
+            metadata = {f"user_api_key_{i}": i for i in range(3000)}
+            stop_at = time.time() + duration_seconds
+
+            def mutator() -> None:
+                n = 0
+                while time.time() < stop_at:
+                    metadata[f"hidden_params_{n}"] = n
+                    n += 1
+
+            mutator_thread = threading.Thread(target=mutator, daemon=True)
+            mutator_thread.start()
+            try:
+                while time.time() < stop_at:
+                    result = add_missing_spend_metadata_to_litellm_metadata({}, metadata)
+                    assert result["user_api_key_0"] == 0
+            finally:
+                mutator_thread.join(timeout=2)

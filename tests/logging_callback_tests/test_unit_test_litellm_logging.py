@@ -80,6 +80,8 @@ def test_is_internal_litellm_proxy_callback():
     # Test string callback
     assert logging._is_internal_litellm_proxy_callback("callback_string") == False
 
+    assert logging._is_internal_litellm_proxy_callback("cache") == True
+
 
 def test_should_run_sync_callbacks_for_async_calls():
     """
@@ -105,6 +107,12 @@ def test_should_run_sync_callbacks_for_async_calls():
     litellm.success_callback = [_PROXY_MaxBudgetLimiter]
     assert logging._should_run_sync_callbacks_for_async_calls() == False
 
+    litellm.success_callback = ["cache"]
+    assert logging._should_run_sync_callbacks_for_async_calls() == False
+
+    litellm.success_callback = ["cache", regular_callback]
+    assert logging._should_run_sync_callbacks_for_async_calls() == True
+
 
 def test_remove_internal_litellm_callbacks():
     logging = setup_logging()
@@ -117,11 +125,13 @@ def test_remove_internal_litellm_callbacks():
         _PROXY_MaxBudgetLimiter,
         _PROXY_CacheControlCheck,
         "string_callback",
+        "cache",
     ]
 
     filtered = logging._remove_internal_litellm_callbacks(callbacks)
     assert len(filtered) == 2  # Should only keep regular_callback and string_callback
     assert regular_callback in filtered
     assert "string_callback" in filtered
+    assert "cache" not in filtered
     assert _PROXY_MaxBudgetLimiter not in filtered
     assert _PROXY_CacheControlCheck not in filtered

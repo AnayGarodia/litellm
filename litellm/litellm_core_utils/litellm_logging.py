@@ -3123,8 +3123,9 @@ class Logging(LiteLLMLoggingBaseClass):
             "_service_logger.ServiceLogging",
             "sync_deployment_callback_on_success",
         ]
+        INTERNAL_STRING_CALLBACKS = {"cache"}
         if isinstance(cb, str):
-            return False
+            return cb in INTERNAL_STRING_CALLBACKS
 
         if not callable(cb):
             return True
@@ -4544,7 +4545,7 @@ class StandardLoggingPayloadSetup:
 
         # Start with metadata (user API key fields) - but skip non-serializable objects
         if litellm_params.get("metadata") and isinstance(litellm_params.get("metadata"), dict):
-            for key, value in litellm_params["metadata"].items():
+            for key, value in tuple(litellm_params["metadata"].items()):
                 # Skip non-serializable objects like UserAPIKeyAuth
                 if key in {"user_api_key_auth", "user_api_key_budget_reservation"}:
                     continue
@@ -4552,7 +4553,7 @@ class StandardLoggingPayloadSetup:
 
         # Then merge litellm_metadata (model-related fields) - this will NOT overwrite existing keys
         if litellm_params.get("litellm_metadata") and isinstance(litellm_params.get("litellm_metadata"), dict):
-            for key, value in litellm_params["litellm_metadata"].items():
+            for key, value in tuple(litellm_params["litellm_metadata"].items()):
                 if key not in merged_metadata:  # Don't overwrite existing keys from metadata
                     merged_metadata[key] = value
 
