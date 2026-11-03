@@ -35,7 +35,7 @@ from collections.abc import (
     Set as AbstractSet,
 )
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 from itertools import chain
 from types import MappingProxyType, TracebackType, UnionType
 from typing import (
@@ -55,6 +55,7 @@ from typing import (
     get_origin,
     get_type_hints,
 )
+from zoneinfo import ZoneInfoNotFoundError
 
 import anyio
 import anyio.lowlevel
@@ -1916,7 +1917,11 @@ async def _proxy_lifespan(app: FastAPI, resources: AsyncExitStack) -> AsyncGener
         "disable_model_info_refresh" in general_settings and general_settings["disable_model_info_refresh"] is True
     )
     model_info_scheduler: Final = (
-        None if model_info_refresh_disabled else scheduler if scheduler is not None else AsyncIOScheduler()
+        None
+        if model_info_refresh_disabled
+        else scheduler
+        if scheduler is not None
+        else AsyncIOScheduler(timezone=_resolve_scheduler_timezone())
     )
     if model_info_scheduler is not None:
         model_info_scheduler.add_job(
@@ -11099,6 +11104,17 @@ def giveup(e):
     return result
 
 
+def _resolve_scheduler_timezone(get_local_timezone: Callable[[], tzinfo] | None = None) -> tzinfo:
+    """The scheduler's timezone, falling back to UTC when the host's local zone can't be resolved."""
+    from tzlocal import get_localzone
+
+    resolve: Final = get_local_timezone or get_localzone
+    try:
+        return resolve()
+    except ZoneInfoNotFoundError:
+        return timezone.utc
+
+
 class ProxyStartupEvent:
     @staticmethod
     def attach_router_to_prompt_injection_detectors(llm_router: Router | None) -> None:
@@ -11587,8 +11603,7 @@ class ProxyStartupEvent:
             executors={
                 "default": scheduler_executor,
             },
-            # Disable timezone awareness to reduce computation
-            timezone=None,
+            timezone=_resolve_scheduler_timezone(),
         )
 
         # Use fixed intervals with small random offset instead of jitter

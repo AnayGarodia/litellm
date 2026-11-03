@@ -4732,3 +4732,24 @@ def test_background_response_settings_refresh_and_respect_config(
     assert proxy_server.polling_via_cache_enabled == (["openai"] if config_owned else False)
     assert proxy_server.native_background_mode == (["config-native"] if config_owned else [])
     assert proxy_server.polling_cache_ttl == (900 if config_owned else 3600)
+
+
+def test_resolve_scheduler_timezone_falls_back_to_utc_when_local_zone_is_unresolvable() -> None:
+    from datetime import timezone
+    from zoneinfo import ZoneInfoNotFoundError
+
+    from litellm.proxy import proxy_server
+
+    def unresolvable() -> NoReturn:
+        raise ZoneInfoNotFoundError("tzlocal() does not support non-zoneinfo timezones like Asia/Calcutta")
+
+    assert proxy_server._resolve_scheduler_timezone(unresolvable) == timezone.utc
+
+
+def test_resolve_scheduler_timezone_returns_the_resolved_local_zone() -> None:
+    from zoneinfo import ZoneInfo
+
+    from litellm.proxy import proxy_server
+
+    resolved: Final = ZoneInfo("America/Los_Angeles")
+    assert proxy_server._resolve_scheduler_timezone(lambda: resolved) is resolved
