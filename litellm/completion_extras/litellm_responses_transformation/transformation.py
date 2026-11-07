@@ -2300,7 +2300,7 @@ class OpenAiResponsesToChatCompletionStreamIterator(BaseModelResponseIterator):
                 item.get("type") in ("function_call", "custom_tool_call")
                 for item in output_items
                 if isinstance(item, dict)
-            )
+            ) or bool(tool_call_index_map)
 
             finish_reason: Final = (
                 _map_incomplete_reason_to_finish_reason(_incomplete_reason_from_response_payload(response_data))

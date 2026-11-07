@@ -894,6 +894,38 @@ def test_chunk_parser_function_call_added_produces_tool_use():
     assert choice.finish_reason is None
 
 
+def test_chunk_parser_finish_reason_is_tool_calls_when_completed_output_omits_streamed_call():
+    from litellm.completion_extras.litellm_responses_transformation.transformation import (
+        OpenAiResponsesToChatCompletionStreamIterator,
+    )
+    from litellm.types.llms.openai import ResponsesAPIStreamEvents
+
+    iterator = OpenAiResponsesToChatCompletionStreamIterator(streaming_response=None, sync_stream=True)
+    streamed_events = (
+        {
+            "type": ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED,
+            "output_index": 0,
+            "item": {"type": "function_call", "name": "get_weather", "call_id": "call-1"},
+        },
+        {
+            "type": ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DELTA,
+            "output_index": 0,
+            "delta": '{"city": "Paris"}',
+        },
+        {
+            "type": ResponsesAPIStreamEvents.OUTPUT_ITEM_DONE,
+            "output_index": 0,
+            "item": {"type": "function_call", "name": "get_weather", "call_id": "call-1"},
+        },
+    )
+    for event in streamed_events:
+        iterator.chunk_parser(event)
+
+    completed = iterator.chunk_parser({"type": "response.completed", "response": {"output": []}})
+
+    assert completed.choices[0].finish_reason == "tool_calls"
+
+
 def test_streamed_function_call_namespace_replays_on_next_turn():
     from unittest.mock import Mock
 
@@ -2256,11 +2288,13 @@ def test_text_plus_tool_calls_sequence():
         "output_item.done for function_call must not emit finish_reason"
     )
 
-    # Check response.completed (index 6) has finish_reason='stop'
-    # (the mock chunk has no nested 'response' data, so has_function_calls is False → 'stop')
+    # Check response.completed (index 6) has finish_reason='tool_calls'
+    # (the mock chunk has no nested 'response' data, but a function_call was already streamed)
     completed_result = results[6]
     assert len(completed_result.choices) > 0, "response.completed should have choices"
-    assert completed_result.choices[0].finish_reason == "stop", "response.completed should have finish_reason='stop'"
+    assert completed_result.choices[0].finish_reason == "tool_calls", (
+        "response.completed should have finish_reason='tool_calls' since a function call was streamed"
+    )
 
 
 # =============================================================================
