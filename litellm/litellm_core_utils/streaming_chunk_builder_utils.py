@@ -360,7 +360,11 @@ class ChunkProcessor:
                 content = delta.get(delta_key, "")
                 if content is None:
                     continue  # openai v1.0.0 sets content = None for chunks
-                content_list.append(content)
+                content_list.append(
+                    "".join(block.get("content", "") if isinstance(block, dict) else str(block) for block in content)
+                    if isinstance(content, list)
+                    else content
+                )
 
         # Combine the "content" strings into a single string || combine the 'function' strings into a single string
         combined_content = "".join(content_list)

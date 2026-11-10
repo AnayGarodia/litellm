@@ -160,6 +160,39 @@ def test_get_combined_tool_content():
     ]
 
 
+def test_get_combined_reasoning_content_handles_list_valued_blocks():
+    base_chunk = {
+        "id": "chatcmpl-123",
+        "object": "chat.completion.chunk",
+        "created": 1234567890,
+        "model": "gpt-6.1-sol",
+    }
+
+    def make_chunk(**delta_kwargs):
+        return ModelResponseStream(
+            **base_chunk,
+            choices=[
+                StreamingChoices(
+                    index=0,
+                    delta=Delta(**delta_kwargs),
+                    finish_reason=None,
+                )
+            ],
+        )
+
+    chunks = [
+        make_chunk(role="assistant", content=None),
+        make_chunk(reasoning_content=[{"content": "step one", "signature": "sig_a"}]),
+        make_chunk(reasoning_content=[{"content": "step two", "signature": "sig_b"}]),
+        make_chunk(content="done"),
+    ]
+
+    processor = ChunkProcessor(chunks=chunks)
+    result = processor.get_combined_reasoning_content(chunks)
+
+    assert result == "step onestep two"
+
+
 def test_get_combined_thinking_content_preserves_interleaved_blocks():
     base_chunk = {
         "id": "chatcmpl-123",
